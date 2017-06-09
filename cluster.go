@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 )
 
 const basePort = 26257
@@ -22,8 +24,9 @@ var cockroachBin = func() string {
 }()
 
 type cluster struct {
-	Nodes      map[string]*node
-	NextPort   int
+	sync.Mutex
+	Nodes      map[string]*node `json:"nodes"`
+	NextPort   int              `json:"-"`
 	args       []string
 	attrs      perNodeAttribute
 	localities perNodeAttribute
@@ -50,6 +53,9 @@ func (c *cluster) close() {
 var envRE = regexp.MustCompile(`(COCKROACH_[^=]+|GO[^=]+)=(.*)`)
 
 func (c *cluster) newNode() *node {
+	c.Lock()
+	defer c.Unlock()
+
 	id := len(c.Nodes) + 1
 	name := fmt.Sprintf("%d", id)
 	dir := filepath.Join(dataDir, name)
@@ -101,7 +107,12 @@ func (c *cluster) newNode() *node {
 	return node
 }
 
-func redirect(rw http.ResponseWriter, req *http.Request) {
+func (c *cluster) redirect(rw http.ResponseWriter, req *http.Request) {
+	if req.Header.Get("Content-Type") == "application/json" {
+		rw.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(rw).Encode(c)
+		return
+	}
 	rw.Header().Set("Location", req.Referer())
 	rw.WriteHeader(http.StatusFound)
 }
@@ -116,9 +127,17 @@ func (c *cluster) showCluster(rw http.ResponseWriter, req *http.Request, args ma
 	renderLayout(rw, "cluster.html", "layout.html", "Content", data)
 }
 
+func (c *cluster) demo(rw http.ResponseWriter, req *http.Request, args map[string]string) {
+	renderSimple(rw, "demo.html", nil)
+}
+
+func (c *cluster) noop(rw http.ResponseWriter, req *http.Request, args map[string]string) {
+	c.redirect(rw, req)
+}
+
 func (c *cluster) addNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	c.newNode()
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) findNode(rw http.ResponseWriter, args map[string]string) *node {
@@ -156,7 +175,7 @@ func (c *cluster) startNode(rw http.ResponseWriter, req *http.Request, args map[
 	t.Service = true
 	t.start()
 
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) stopNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
@@ -168,7 +187,7 @@ func (c *cluster) stopNode(rw http.ResponseWriter, req *http.Request, args map[s
 	t.Service = false
 	t.stop()
 
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) pauseNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
@@ -179,7 +198,7 @@ func (c *cluster) pauseNode(rw http.ResponseWriter, req *http.Request, args map[
 
 	t.pause()
 
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) resumeNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
@@ -190,35 +209,36 @@ func (c *cluster) resumeNode(rw http.ResponseWriter, req *http.Request, args map
 
 	t.resume()
 
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) startAll(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	for _, t := range c.Nodes {
 		t.start()
 	}
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) stopAll(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	for _, t := range c.Nodes {
+		t.Service = false
 		t.stop()
 	}
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) pauseAll(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	for _, t := range c.Nodes {
 		t.pause()
 	}
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) resumeAll(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	for _, t := range c.Nodes {
 		t.resume()
 	}
-	redirect(rw, req)
+	c.redirect(rw, req)
 }
 
 func (c *cluster) nodeHistory(rw http.ResponseWriter, req *http.Request, args map[string]string) {

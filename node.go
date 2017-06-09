@@ -14,23 +14,23 @@ import (
 )
 
 type node struct {
-	Name     string
+	Name     string `json:"name"`
 	Args     []string
 	Env      map[string]string
 	Stdout   string
 	Stderr   string
-	URL      string
+	URL      string `json:"url"`
 	Attrs    string
 	Locality string
 
-	Active *nodeRun
+	Active *nodeRun `json:"run"`
 	Runs   []*nodeRun
 
 	Service bool
 }
 
 type nodeRun struct {
-	ID         int
+	ID         int `json:"id"`
 	Cmd        *exec.Cmd
 	Error      error
 	Started    time.Time
@@ -44,7 +44,7 @@ type nodeRun struct {
 	StderrBuf  logWriter
 	Env        map[string]string
 	WaitStatus syscall.WaitStatus
-	Paused     bool
+	Paused     bool `json:"paused"`
 }
 
 func (r *nodeRun) String() string {

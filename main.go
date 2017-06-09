@@ -145,6 +145,22 @@ func getCSS(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	}
 }
 
+func getJS(rw http.ResponseWriter, req *http.Request, args map[string]string) {
+	asset, err := Asset("assets" + req.URL.Path)
+	if err != nil {
+		log.Print(err)
+		rw.WriteHeader(http.StatusNotFound)
+		renderError(rw, fmt.Sprintf("assets%s not found", req.URL.Path))
+		return
+	}
+	rw.Header().Add("Content-Type", "application/javascript")
+	_, err = rw.Write(asset)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+}
+
 func init() {
 	flag.Var(&attrs, "a", "(repeatable) attrs to be assigned to specific nodes in the form node_id:value e.g. -a=1:ssd -a=2:x16c:ssd")
 	flag.Var(&localities, "l", "(repeatable) localities to be assigned to specific nodes in the form node_id:locality e.g. -l=1:country=us,region=us-west -l=2:country=ca,region=ca-east")
@@ -180,7 +196,10 @@ func main() {
 	}
 
 	routes := routes{
-		makeRoute(`/`, c.showCluster),
+		makeRoute(`/`, c.demo),
+		makeRoute(`/cluster`, c.showCluster),
+
+		makeRoute(`/noop`, c.noop),
 		makeRoute(`/add`, c.addNode),
 		makeRoute(`/stopall`, c.stopAll),
 		makeRoute(`/startall`, c.startAll),
@@ -198,6 +217,7 @@ func main() {
 		makeRoute(`/node/(?P<node>[^/]+)/run/(?P<run>\d+)/stderr`, c.nodeRunStderr),
 
 		makeRoute(`/css/(?P<file>.*)`, getCSS),
+		makeRoute(`/js/(?P<file>.*)`, getJS),
 	}
 
 	s := &http.Server{
