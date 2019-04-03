@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -77,12 +78,19 @@ func renderSimple(rw http.ResponseWriter, asset string, data map[string]interfac
 	}
 }
 
-func renderError(rw http.ResponseWriter, message string) {
-	renderSimple(rw, "error.html", map[string]interface{}{"Error": message})
+func renderError(rw http.ResponseWriter, req *http.Request, err error) {
+	if req.Header.Get("Content-Type") == "application/json" {
+		rw.WriteHeader(http.StatusInternalServerError)
+		rw.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(rw).Encode(struct{ Error string }{err.Error()})
+		return
+	}
+	renderSimple(rw, "error.html", map[string]interface{}{"Error": err.Error()})
 }
 
-func renderLayout(rw http.ResponseWriter, asset string, layout string, key string,
-	data map[string]interface{}) {
+func renderLayout(
+	rw http.ResponseWriter, asset string, layout string, key string, data map[string]interface{},
+) {
 	html, err := render(asset, data)
 	if err != nil {
 		log.Fatal(err)
@@ -134,7 +142,7 @@ func getCSS(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	if err != nil {
 		log.Print(err)
 		rw.WriteHeader(http.StatusNotFound)
-		renderError(rw, fmt.Sprintf("assets%s not found", req.URL.Path))
+		renderError(rw, req, fmt.Errorf("assets%s not found", req.URL.Path))
 		return
 	}
 	rw.Header().Add("Content-Type", "text/css")
@@ -150,7 +158,7 @@ func getJS(rw http.ResponseWriter, req *http.Request, args map[string]string) {
 	if err != nil {
 		log.Print(err)
 		rw.WriteHeader(http.StatusNotFound)
-		renderError(rw, fmt.Sprintf("assets%s not found", req.URL.Path))
+		renderError(rw, req, fmt.Errorf("assets%s not found", req.URL.Path))
 		return
 	}
 	rw.Header().Add("Content-Type", "application/javascript")
@@ -205,6 +213,9 @@ func main() {
 		makeRoute(`/startall`, c.startAll),
 		makeRoute(`/pauseall`, c.pauseAll),
 		makeRoute(`/resumeall`, c.resumeAll),
+
+		makeRoute(`/startworkload`, c.startWorkload),
+		makeRoute(`/stopworkload`, c.stopWorkload),
 
 		makeRoute(`/node/(?P<node>[^/]+)/start`, c.startNode),
 		makeRoute(`/node/(?P<node>[^/]+)/stop`, c.stopNode),

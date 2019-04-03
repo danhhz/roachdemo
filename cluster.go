@@ -6,10 +6,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"sync"
+
+	dockerclient "github.com/docker/docker/client"
 )
 
 const basePort = 26257
@@ -30,6 +33,9 @@ type cluster struct {
 	args       []string
 	attrs      perNodeAttribute
 	localities perNodeAttribute
+
+	d               *dockerclient.Client
+	WorkloadProcess *os.Process `json:"kv"`
 }
 
 func newCluster(args []string, attrs, localities perNodeAttribute) *cluster {
@@ -51,6 +57,58 @@ func (c *cluster) close() {
 }
 
 var envRE = regexp.MustCompile(`(COCKROACH_[^=]+|GO[^=]+)=(.*)`)
+
+func (c *cluster) startWorkload(rw http.ResponseWriter, req *http.Request, args map[string]string) {
+	run := func() error {
+		if c.WorkloadProcess != nil {
+			return nil
+		}
+
+		args := []string{
+			cockroachBin,
+			`kv`,
+			`--init`,
+			fmt.Sprintf(`localhost:%d`, basePort),
+		}
+		cmd := exec.Command(args[0], args[1:]...)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		c.WorkloadProcess = cmd.Process
+		return nil
+	}
+
+	if err := run(); err != nil {
+		renderError(rw, req, err)
+		return
+	}
+	c.redirect(rw, req)
+}
+
+func (c *cluster) stopWorkload(rw http.ResponseWriter, req *http.Request, args map[string]string) {
+	run := func() error {
+		if c.WorkloadProcess == nil {
+			return nil
+		}
+
+		if err := c.WorkloadProcess.Kill(); err != nil {
+			return err
+		}
+		// Kill doesn't wait for it to stop, so do that explictly.
+		if _, err := c.WorkloadProcess.Wait(); err != nil {
+			return err
+		}
+
+		c.WorkloadProcess = nil
+		return nil
+	}
+
+	if err := run(); err != nil {
+		renderError(rw, req, err)
+		return
+	}
+	c.redirect(rw, req)
+}
 
 func (c *cluster) newNode() *node {
 	c.Lock()
@@ -140,34 +198,38 @@ func (c *cluster) addNode(rw http.ResponseWriter, req *http.Request, args map[st
 	c.redirect(rw, req)
 }
 
-func (c *cluster) findNode(rw http.ResponseWriter, args map[string]string) *node {
+func (c *cluster) findNode(
+	rw http.ResponseWriter, req *http.Request, args map[string]string,
+) *node {
 	id := args["node"]
 	t, ok := c.Nodes[id]
 	if !ok {
 		rw.WriteHeader(http.StatusBadRequest)
-		renderError(rw, fmt.Sprintf("node %s not found", id))
+		renderError(rw, req, fmt.Errorf("node %s not found", id))
 		return nil
 	}
 	return t
 }
 
-func (c *cluster) findNodeRun(rw http.ResponseWriter, t *node, args map[string]string) *nodeRun {
+func (c *cluster) findNodeRun(
+	rw http.ResponseWriter, req *http.Request, t *node, args map[string]string,
+) *nodeRun {
 	run, err := strconv.Atoi(args["run"])
 	if err != nil {
 		rw.WriteHeader(http.StatusBadRequest)
-		renderError(rw, err.Error())
+		renderError(rw, req, err)
 		return nil
 	}
 	if run < 0 || run >= len(t.Runs) {
 		rw.WriteHeader(http.StatusBadRequest)
-		renderError(rw, fmt.Sprintf("run %d of node %s not found", run, t.Name))
+		renderError(rw, req, fmt.Errorf("run %d of node %s not found", run, t.Name))
 		return nil
 	}
 	return t.Runs[run]
 }
 
 func (c *cluster) startNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
@@ -179,7 +241,7 @@ func (c *cluster) startNode(rw http.ResponseWriter, req *http.Request, args map[
 }
 
 func (c *cluster) stopNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
@@ -191,7 +253,7 @@ func (c *cluster) stopNode(rw http.ResponseWriter, req *http.Request, args map[s
 }
 
 func (c *cluster) pauseNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
@@ -202,7 +264,7 @@ func (c *cluster) pauseNode(rw http.ResponseWriter, req *http.Request, args map[
 }
 
 func (c *cluster) resumeNode(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
@@ -242,7 +304,7 @@ func (c *cluster) resumeAll(rw http.ResponseWriter, req *http.Request, args map[
 }
 
 func (c *cluster) nodeHistory(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
@@ -258,12 +320,12 @@ func (c *cluster) nodeHistory(rw http.ResponseWriter, req *http.Request, args ma
 }
 
 func (c *cluster) nodeRunPage(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
 
-	run := c.findNodeRun(rw, t, args)
+	run := c.findNodeRun(rw, req, t, args)
 	if run == nil {
 		return
 	}
@@ -280,12 +342,12 @@ func (c *cluster) nodeRunPage(rw http.ResponseWriter, req *http.Request, args ma
 }
 
 func (c *cluster) nodeRunStdout(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
 
-	run := c.findNodeRun(rw, t, args)
+	run := c.findNodeRun(rw, req, t, args)
 	if run == nil {
 		return
 	}
@@ -304,12 +366,12 @@ func (c *cluster) nodeRunStdout(rw http.ResponseWriter, req *http.Request, args 
 }
 
 func (c *cluster) nodeRunStderr(rw http.ResponseWriter, req *http.Request, args map[string]string) {
-	t := c.findNode(rw, args)
+	t := c.findNode(rw, req, args)
 	if t == nil {
 		return
 	}
 
-	run := c.findNodeRun(rw, t, args)
+	run := c.findNodeRun(rw, req, t, args)
 	if run == nil {
 		return
 	}

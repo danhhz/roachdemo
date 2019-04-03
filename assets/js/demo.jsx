@@ -6,6 +6,7 @@ class App extends React.Component {
     this._postJSON = this._postJSON.bind(this);
     this.state = {
       nodes: [],
+      raw: {},
     };
   };
 
@@ -26,6 +27,7 @@ class App extends React.Component {
           .sort((a, b) => parseInt(a.name) - parseInt(b.name));
         this.setState({
           nodes: nodes,
+          raw: r,
         });
       })
       .catch(err => console.error(err));
@@ -40,6 +42,8 @@ class App extends React.Component {
       resumeAll: () => this._postJSON('/resumeall'),
       destroyNode: name => this._postJSON('/node/' + name + '/stop'),
       destroyAll: () => this._postJSON('/stopall'),
+      startKV: () => this._postJSON('/startkv'),
+      stopKV: () => this._postJSON('/stopkv'),
     }
     return (
       <div>
@@ -53,7 +57,7 @@ class App extends React.Component {
 
         <div className='container-fluid'>
           <Carousel fn={fn} nodes={this.state.nodes} />
-          <Nodes fn={fn} nodes={this.state.nodes} />
+          <Nodes fn={fn} nodes={this.state.nodes} raw={this.state.raw} />
         </div>
       </div>
     );
@@ -96,6 +100,16 @@ class Nodes extends React.Component {
                 onClick={() => this.props.fn.destroyAll() }
                 disabled={!this.props.nodes.every(n => n.status === 'Destroyed') ? '' : 'disabled'}
               >Destroy All</button>
+              <button
+                className='btn btn-xs btn-primary'
+                onClick={() => this.props.fn.startKV() }
+                disabled={this.props.raw.kv === '' ? '' : 'disabled'}
+              >Start Load</button>
+              <button
+                className='btn btn-xs btn-primary'
+                onClick={() => this.props.fn.stopKV() }
+                disabled={this.props.raw.kv !== '' ? '' : 'disabled'}
+              >Stop Load</button>
             </td>
           </tr>
         </tbody>
@@ -205,7 +219,7 @@ class Carousel extends React.Component {
       {
         headline: 'Start up 3 nodes',
         text: [
-          <p>Open the Admin UI of one of your nodes and click View nodes list on the right. You'll see that all three nodes are listed. At first, the replica count will be lower for nodes 2 and 3. Very soon, the replica count will be identical across all three nodes, indicating that all data in the cluster has been replicated 3 times; there's a copy of every piece of data on each node.</p>
+          <p>Lorum ipsum</p>,
         ],
         actionFn: (nodes) => {
           let filteredNodes = nodes.filter(n => n.status !== 'Destroyed');
@@ -216,6 +230,15 @@ class Carousel extends React.Component {
           (nodes) => Carousel._nodeCountValidation(nodes, 0, undefined),
         ],
       },
+      // {
+      //   headline: 'Start a load generator',
+      //   text: [
+      //     <p>Open the Admin UI of one of your nodes and click View nodes list on the right. You'll see that all three nodes are listed. At first, the replica count will be lower for nodes 2 and 3. Very soon, the replica count will be identical across all three nodes, indicating that all data in the cluster has been replicated 3 times; there's a copy of every piece of data on each node.</p>
+      //   ],
+      //   actionFn: (nodes) => {
+      //     this.props.fn.startKV();
+      //   },
+      // },
       {
         headline: 'Add two more nodes',
         text: [
@@ -266,6 +289,12 @@ class Carousel extends React.Component {
           this.props.fn.addNode();
         },
       },
+      // {
+      //   headline: 'Stop the load generator',
+      //   actionFn: (nodes) => {
+      //     this.props.fn.stopKV();
+      //   },
+      // },
       {
         headline: 'All done',
         text: [
@@ -311,12 +340,12 @@ class CarouselItem extends React.Component {
     return (
       <div className={this.props.active ? 'item active' : 'item'}>
         <div className='container'>
+          <h1>{this.props.headline}</h1>
+          {this.props.text}
+          {failures.map(failure => (
+            <div className="alert alert-info" role="alert">{failure}</div>
+          ))}
           <div className='carousel-caption'>
-            <h1>{this.props.headline}</h1>
-            {this.props.text}
-            {failures.map(failure => (
-              <p>{failure}</p>
-            ))}
             <p><button
               className='btn btn-lg btn-primary'
               onClick={() => {
@@ -327,7 +356,7 @@ class CarouselItem extends React.Component {
               }}
               disabled={failures.length > 0 ? 'disabled' : ''}
               >{this.props.action ? this.props.action : 'Run'}</button></p>
-          </div>
+            </div>
         </div>
       </div>
     );
